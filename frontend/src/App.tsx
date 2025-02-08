@@ -39,7 +39,7 @@ function App() {
     setMessages((prev) => [...prev, newMessage]);
 
     try {
-      const response = await axios.post('http://localhost:8000/chat', {
+      const response = await axios.post('/api/chat', {
         message,
         session_id: sessionId,
         image_data: imageData,
@@ -64,7 +64,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      const response = await axios.post('http://localhost:8000/upload-document', formData);
+      const response = await axios.post('/api/upload-document', formData);
       toast.success('File uploaded successfully!');
       return response.data.image_data;
     } catch (error) {
@@ -76,7 +76,7 @@ function App() {
 
   const handleExportChat = async () => {
     try {
-      const response = await axios.post(`http://localhost:8000/export-chat/${sessionId}`);
+      const response = await axios.post(`/api/export-chat/${sessionId}`);
       const blob = new Blob([response.data.csv_data], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
