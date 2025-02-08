@@ -9,7 +9,7 @@ export interface ChatMessageProps {
 }
 
 export interface InputAreaProps {
-  onSendMessage: (message: string, imageData?: string) => void;
+  onSendMessage: (message: string, imageData: string | null) => void;
   onFileUpload: (file: File) => Promise<string | null>;
   loading: boolean;
 }

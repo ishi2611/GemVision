@@ -48,47 +48,37 @@ const InputArea = ({ onSendMessage, onFileUpload, loading }: InputAreaProps) => 
           </button>
         </div>
       )}
-      
-      <form onSubmit={handleSubmit} className="flex items-center gap-4">
+      <form onSubmit={handleSubmit} className="flex items-center gap-2">
         <input
           type="file"
-          ref={fileInputRef}
-          onChange={handleFileChange}
-          accept="image/*,.pdf"
+          accept="image/*,application/pdf"
           className="hidden"
+          onChange={handleFileChange}
+          ref={fileInputRef}
         />
-        
-        <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
+        <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="p-2 rounded-full bg-gray-700 hover:bg-gray-600 transition-colors"
+          className="p-2 hover:bg-gray-700 rounded-full transition-colors"
+          disabled={loading}
         >
-          <PhotoIcon className="w-6 h-6 text-gray-300" />
-        </motion.button>
-        
+          <PhotoIcon className="h-6 w-6 text-gray-400" />
+        </button>
         <input
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder="Type your message..."
-          className="flex-1 bg-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+          className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           disabled={loading}
         />
-        
         <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
           type="submit"
+          whileTap={{ scale: 0.95 }}
+          className="p-2 bg-blue-500 hover:bg-blue-600 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={loading || (!message.trim() && !imagePreview)}
-          className={`p-2 rounded-full ${
-            loading || (!message.trim() && !imagePreview)
-              ? 'bg-gray-600'
-              : 'bg-purple-600 hover:bg-purple-700'
-          } transition-colors`}
         >
-          <PaperAirplaneIcon className="w-6 h-6 text-white" />
+          <PaperAirplaneIcon className="h-6 w-6 text-white" />
         </motion.button>
       </form>
     </div>
