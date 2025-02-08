@@ -27,8 +27,8 @@ function App() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = async (message: string, imageData?: string) => {
-    if (!message.trim()) return;
+  const handleSendMessage = async (message: string, imageData: string | null) => {
+    if (!message.trim() && !imageData) return;
 
     setLoading(true);
     const newMessage: Message = {
