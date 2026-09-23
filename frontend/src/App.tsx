@@ -43,6 +43,7 @@ function App() {
         message,
         session_id: sessionId,
         image_data: imageData,
+        history: messages.map(({ role, content }) => ({ role, content })),
       });
 
       const botResponse: Message = {
@@ -74,23 +75,24 @@ function App() {
     }
   };
 
-  const handleExportChat = async () => {
-    try {
-      const response = await axios.post(`/api/export-chat/${sessionId}`);
-      const blob = new Blob([response.data.csv_data], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `chat-export-${new Date().toISOString()}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      toast.success('Chat exported successfully!');
-    } catch (error) {
-      toast.error('Failed to export chat');
-      console.error('Error:', error);
+  const handleExportChat = () => {
+    if (messages.length === 0) {
+      toast.error('Nothing to export yet');
+      return;
     }
+    const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const rows = messages.map((m) => [m.timestamp, m.role, m.content].map(escape).join(','));
+    const csv = ['timestamp,role,content', ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat-export-${sessionId}-${new Date().toISOString()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    toast.success('Chat exported successfully!');
   };
 
   return (
@@ -98,7 +100,7 @@ function App() {
       <BackgroundAnimation />
       <div className="container mx-auto px-4 py-8 relative z-10">
         <Header onExport={handleExportChat} />
-        
+
         <div className="max-w-4xl mx-auto bg-gray-800 rounded-lg shadow-xl overflow-hidden">
           <div className="h-[600px] overflow-y-auto p-6">
             <AnimatePresence>
@@ -116,7 +118,7 @@ function App() {
             </AnimatePresence>
             <div ref={messagesEndRef} />
           </div>
-          
+
           <InputArea
             onSendMessage={handleSendMessage}
             onFileUpload={handleFileUpload}
