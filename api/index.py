@@ -1,83 +1,113 @@
-import base64
 import logging
 import os
-import re
 import time
 
+import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
-from google import genai
-from google.genai import errors, types
 
 load_dotenv()
 
 app = Flask(__name__)
 log = logging.getLogger("gemvision")
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 # Models can be changed in Vercel without touching code (Settings -> Environment Variables).
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-# Optional comma-separated list of extra models to try when the main one hits its rate limit.
-# Each model has its own free-tier quota, so this spreads traffic out.
-FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "").split(",") if m.strip()]
+# Groq only offers a few vision models, so images go to a separate model from plain chat.
+TEXT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_HISTORY_TURNS = 20
-# Google returns these when a model is temporarily overloaded; they usually clear within seconds.
-TRANSIENT_ERROR_CODES = {500, 503, 504}
+# Groq returns these when a model is temporarily overloaded; they usually clear within seconds.
+TRANSIENT_ERROR_CODES = {500, 502, 503, 504}
 
-SYSTEM_INSTRUCTION = (
+BASE_PROMPT = (
     "You are GemVision, a helpful and friendly AI assistant that can also analyze images. "
-    "Answer clearly and concisely. Use Markdown formatting (lists, headings, code blocks) "
-    "when it makes the answer easier to read."
+    "Use Markdown formatting (lists, headings, tables, code blocks) when it makes the answer easier to read."
 )
 
-_client = None
+# Each mode adds its own instructions on top of the base prompt.
+MODES = {
+    "general": "Answer clearly and concisely.",
+    "code": (
+        "Act as a senior software engineer. Give working, idiomatic code in fenced code blocks with the "
+        "language named, explain the key idea briefly, and point out bugs or edge cases you notice."
+    ),
+    "writing": (
+        "Act as a professional writing coach. When given text, return an improved version first, then a short "
+        "bulleted list of what you changed and why. Keep the author's voice."
+    ),
+    "tutor": (
+        "Act as a patient tutor. Explain step by step, using simple language and a small example. "
+        "End with one short question the learner can answer to check their understanding."
+    ),
+}
 
 
-def get_client():
-    """Create the Gemini client lazily so a missing key gives a clear error, not a crash."""
-    global _client
-    if _client is None:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
-        _client = genai.Client(api_key=api_key)
-    return _client
+class ProviderError(Exception):
+    def __init__(self, status, retry_after=None):
+        super().__init__(f"Groq returned {status}")
+        self.status = status
+        self.retry_after = retry_after
 
 
-def decode_data_url(data_url):
-    """Split 'data:image/png;base64,....' into (bytes, mime type)."""
-    header, _, encoded = data_url.partition(",")
-    mime_type = header.split(";")[0].removeprefix("data:") or "image/jpeg"
-    return base64.b64decode(encoded), mime_type
+def validate_image(data_url):
+    mime_type = data_url.split(";")[0].removeprefix("data:")
+    if mime_type not in ALLOWED_IMAGE_TYPES:
+        raise ValueError("Only PNG, JPEG, GIF or WebP images are supported")
+    return data_url
 
 
-def retry_after_seconds(error):
-    """Pull the suggested wait time out of a Gemini 429 error message, if there is one."""
-    match = re.search(r"retry in ([\d.]+)s", str(error))
-    return max(1, round(float(match.group(1)))) if match else 30
+def user_content(text, image_data):
+    """Groq uses the OpenAI format: plain text, or a list of parts when there is an image."""
+    if not image_data:
+        return text
+    return [
+        {"type": "text", "text": text or "Describe this image."},
+        {"type": "image_url", "image_url": {"url": validate_image(image_data)}},
+    ]
 
 
-def build_contents(history, message, image_data):
+def build_messages(history, message, image_data, mode):
     # Serverless functions don't keep memory between requests,
     # so the browser sends the conversation so far with each message.
-    contents = []
+    system = f"{BASE_PROMPT} {MODES.get(mode, MODES['general'])}"
+    messages = [{"role": "system", "content": system}]
     for turn in history[-MAX_HISTORY_TURNS:]:
         text = (turn.get("content") or "").strip()
-        if not text:
-            continue
-        role = "model" if turn.get("role") == "assistant" else "user"
-        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text)]))
+        role = "assistant" if turn.get("role") == "assistant" else "user"
+        # The browser includes the most recent image so follow-up questions can refer to it.
+        image = turn.get("image") if role == "user" else None
+        if text or image:
+            messages.append({"role": role, "content": user_content(text, image)})
+    messages.append({"role": "user", "content": user_content(message, image_data)})
+    return messages
 
-    parts = []
-    if image_data:
-        image_bytes, mime_type = decode_data_url(image_data)
-        if mime_type not in ALLOWED_IMAGE_TYPES:
-            raise ValueError("Only PNG, JPEG, GIF or WebP images are supported")
-        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
-    parts.append(types.Part.from_text(text=message or "Describe this image."))
-    contents.append(types.Content(role="user", parts=parts))
-    return contents
+
+def has_image(messages):
+    return any(isinstance(m["content"], list) for m in messages)
+
+
+def call_groq(model, messages):
+    payload = {"model": model, "messages": messages, "temperature": 0.6}
+    # Reasoning models "think" before answering; only the final answer is shown in the chat.
+    if model.startswith("openai/gpt-oss"):
+        payload["include_reasoning"] = False
+    elif model.startswith("qwen/"):
+        payload["reasoning_format"] = "hidden"
+
+    res = requests.post(
+        GROQ_URL,
+        headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
+        json=payload,
+        timeout=55,
+    )
+    if res.status_code != 200:
+        log.warning("Groq error %s with model %s: %s", res.status_code, model, res.text[:500])
+        retry_after = res.headers.get("retry-after")
+        raise ProviderError(res.status_code, round(float(retry_after)) if retry_after else None)
+    return res.json()["choices"][0]["message"].get("content") or ""
 
 
 @app.post("/api/chat")
@@ -86,59 +116,51 @@ def chat():
     message = (data.get("message") or "").strip()
     image_data = data.get("image_data")
     history = data.get("history") or []
+    mode = data.get("mode") or "general"
 
     if not message and not image_data:
         return jsonify({"error": "Please type a message or attach an image."}), 400
+    if not os.getenv("GROQ_API_KEY"):
+        return jsonify({"error": "The server is missing its GROQ_API_KEY. Add it in the Vercel settings."}), 500
 
     try:
-        contents = build_contents(history, message, image_data)
+        messages = build_messages(history, message, image_data, mode)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    except Exception:
-        return jsonify({"error": "Could not read the image. Please try a different one."}), 400
 
-    config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
-    rate_limit_error = None
-    overloaded = False
+    model = VISION_MODEL if has_image(messages) else TEXT_MODEL
+    for attempt in range(2):
+        try:
+            reply = call_groq(model, messages)
+            break
+        except ProviderError as e:
+            if e.status == 429:
+                wait = max(1, e.retry_after or 30)
+                return (
+                    jsonify(
+                        {
+                            "error": f"GemVision is getting a lot of requests right now. Please try again in {wait} seconds.",
+                            "retry_after": wait,
+                        }
+                    ),
+                    429,
+                    {"Retry-After": str(wait)},
+                )
+            if e.status == 413:
+                return jsonify({"error": "That image is too large. Please try a smaller one."}), 413
+            if e.status in TRANSIENT_ERROR_CODES and attempt == 0:
+                time.sleep(1.5)
+                continue  # retry once
+            if e.status in TRANSIENT_ERROR_CODES:
+                return jsonify({"error": "The AI service is overloaded right now. Please try again in a moment."}), 503
+            return jsonify({"error": "The AI service ran into a problem. Please try again."}), 502
+        except requests.RequestException:
+            log.exception("Could not reach Groq")
+            return jsonify({"error": "Couldn't reach the AI service. Please try again."}), 502
 
-    for model in [MODEL, *FALLBACK_MODELS]:
-        for attempt in range(2):
-            try:
-                response = get_client().models.generate_content(model=model, contents=contents, config=config)
-            except errors.APIError as e:
-                if e.code == 429:
-                    rate_limit_error = e
-                    break  # this model is out of quota, try the next one
-                if e.code in TRANSIENT_ERROR_CODES:
-                    overloaded = True
-                    if attempt == 0:
-                        time.sleep(1.5)
-                        continue  # retry the same model once
-                    break  # still overloaded, try the next one
-                log.exception("Gemini API error with model %s", model)
-                return jsonify({"error": "The AI service ran into a problem. Please try again."}), 502
-            except Exception:
-                log.exception("Unexpected error calling Gemini")
-                return jsonify({"error": "Something went wrong on our side. Please try again."}), 500
-
-            if not response.text:
-                return jsonify({"error": "No reply was generated for that message. Try rephrasing it."}), 502
-            return jsonify({"response": response.text})
-
-    if not rate_limit_error:
-        return jsonify({"error": "Google's Gemini service is overloaded right now. Please try again in a moment."}), 503
-
-    wait = retry_after_seconds(rate_limit_error)
-    return (
-        jsonify(
-            {
-                "error": f"GemVision is getting a lot of requests right now. Please try again in {wait} seconds.",
-                "retry_after": wait,
-            }
-        ),
-        429,
-        {"Retry-After": str(wait)},
-    )
+    if not reply.strip():
+        return jsonify({"error": "No reply was generated for that message. Try rephrasing it."}), 502
+    return jsonify({"response": reply, "model": model})
 
 
 @app.get("/api/health")
@@ -146,9 +168,9 @@ def health():
     return jsonify(
         {
             "ok": True,
-            "model": MODEL,
-            "fallback_models": FALLBACK_MODELS,
-            "key_set": bool(os.getenv("GEMINI_API_KEY")),
+            "text_model": TEXT_MODEL,
+            "vision_model": VISION_MODEL,
+            "key_set": bool(os.getenv("GROQ_API_KEY")),
         }
     )
 

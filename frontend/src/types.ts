@@ -11,3 +11,15 @@ export interface ChatErrorState {
   /** Epoch ms after which retrying makes sense (set for rate-limit errors). */
   retryAt?: number;
 }
+
+export type Mode = 'general' | 'code' | 'writing' | 'tutor';
+
+export interface Conversation {
+  id: string;
+  title: string;
+  mode: Mode;
+  messages: Message[];
+  updatedAt: number;
+}
+
+export type Theme = 'light' | 'dark' | 'system';

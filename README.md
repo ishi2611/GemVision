@@ -1,22 +1,24 @@
 # GemVision
 
-A clean, mobile-friendly AI chat app powered by Google Gemini. Chat with it, or attach an image and ask questions about it.
+A clean, mobile-friendly AI chat app powered by [Groq](https://groq.com) (free tier). Chat with it, or attach an image and ask questions about it.
 
 **Live:** https://gem-vision.vercel.app
 
 ## Features
 
-- Chat with conversation context
-- Image understanding (images are resized in the browser before upload)
-- Markdown replies with code blocks, lists and tables
-- Light and dark mode that follow your system setting
-- Clear error messages, with an automatic retry countdown when the API is busy
-- Download a conversation as Markdown
+- **Saved chats:** a sidebar keeps your conversations in this browser, grouped by date and searchable
+- **Assistant modes:** General, Code, Writing and Tutor, each with its own instructions and starter prompts
+- **Image understanding:** attach, paste or drag in an image, then use one-tap actions (Describe, Extract text, Solve, Translate, Explain chart). Follow-up questions can refer to the latest image
+- **Voice:** speak your question with the mic, and have any answer read aloud
+- **Edit and regenerate:** edit your last message or get a fresh answer
+- **Light, Dark or System theme**
+- Markdown replies with code blocks, lists and tables; download a chat as Markdown
+- Clear error messages, with a retry countdown when the free-tier limit is hit
 
 ## Tech stack
 
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS (`frontend/`)
-- **API:** Python Flask serverless function using the `google-genai` SDK (`api/index.py`)
+- **API:** Python Flask serverless function that calls Groq's OpenAI-compatible API (`api/index.py`)
 - **Hosting:** Vercel
 
 ## Project structure
@@ -30,15 +32,15 @@ GemVision/
     ├── index.html
     └── src/
         ├── App.tsx       # Chat state and layout
-        ├── components/   # Header, ChatMessage, Composer, EmptyState, ErrorNotice, Logo
-        └── lib/          # API client and image resizing
+        ├── components/   # Sidebar, Header, ChatMessage, Composer, EmptyState, ErrorNotice, Logo
+        └── lib/          # API client, modes, speech, storage, image resizing
 ```
 
 ## Running locally
 
 1. Create `.env` in the project root:
    ```
-   GEMINI_API_KEY=your_api_key_here
+   GROQ_API_KEY=your_api_key_here
    ```
 2. Start the API (port 8000):
    ```bash
@@ -58,13 +60,13 @@ GemVision/
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | Yes | Google AI Studio API key |
-| `GEMINI_MODEL` | No | Model to use (default `gemini-3.8-flash`) |
-| `GEMINI_FALLBACK_MODELS` | No | Comma-separated models to try when the main one is rate limited |
+| `GROQ_API_KEY` | Yes | Free key from https://console.groq.com/keys |
+| `GROQ_MODEL` | No | Chat model (default `openai/gpt-oss-120b`) |
+| `GROQ_VISION_MODEL` | No | Model used when an image is involved (default `qwen/qwen3.8-27b`) |
 
-> **Rate limits:** Gemini's free tier allows only a few requests per minute per model, shared by everyone using the site. For more than light testing, enable billing on the Google AI Studio project or set `GEMINI_FALLBACK_MODELS`.
+> **Rate limits:** Groq's free tier allows about 30 requests per minute and 1,000 per day per model, shared by everyone using the site.
 
 ## API
 
-- `POST /api/chat`: body `{ message, image_data?, history[] }`, returns `{ response }`, or `{ error, retry_after? }` on failure
+- `POST /api/chat`: body `{ message, image_data?, mode?, history[] }`, returns `{ response }`, or `{ error, retry_after? }` on failure
 - `GET /api/health`: shows which model is configured and whether the key is set

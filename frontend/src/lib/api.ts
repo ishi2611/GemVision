@@ -1,4 +1,4 @@
-import { Message } from '../types';
+import { Message, Mode } from '../types';
 
 export class ChatError extends Error {
   constructor(message: string, public retryAfter?: number) {
@@ -10,9 +10,14 @@ interface ChatRequest {
   message: string;
   image?: string;
   history: Message[];
+  mode: Mode;
 }
 
-export async function sendChat({ message, image, history }: ChatRequest): Promise<string> {
+export async function sendChat({ message, image, history, mode }: ChatRequest): Promise<string> {
+  // Only the most recent image is sent again, so follow-up questions can refer to it
+  // without making every request huge.
+  const lastImageId = image ? undefined : [...history].reverse().find((m) => m.image)?.id;
+
   let res: Response;
   try {
     res = await fetch('/api/chat', {
@@ -20,8 +25,13 @@ export async function sendChat({ message, image, history }: ChatRequest): Promis
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
+        mode,
         image_data: image ?? null,
-        history: history.map(({ role, content }) => ({ role, content })),
+        history: history.map(({ id, role, content, image: img }) => ({
+          role,
+          content,
+          ...(id === lastImageId && img ? { image: img } : {}),
+        })),
       }),
     });
   } catch {
