@@ -2,6 +2,7 @@ import base64
 import logging
 import os
 import re
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -21,6 +22,8 @@ FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "").sp
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_HISTORY_TURNS = 20
+# Google returns these when a model is temporarily overloaded; they usually clear within seconds.
+TRANSIENT_ERROR_CODES = {500, 503, 504}
 
 SYSTEM_INSTRUCTION = (
     "You are GemVision, a helpful and friendly AI assistant that can also analyze images. "
@@ -96,23 +99,34 @@ def chat():
 
     config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
     rate_limit_error = None
+    overloaded = False
 
     for model in [MODEL, *FALLBACK_MODELS]:
-        try:
-            response = get_client().models.generate_content(model=model, contents=contents, config=config)
-        except errors.APIError as e:
-            if e.code == 429:
-                rate_limit_error = e
-                continue  # this model is out of quota, try the next one
-            log.exception("Gemini API error with model %s", model)
-            return jsonify({"error": "The AI service ran into a problem. Please try again."}), 502
-        except Exception:
-            log.exception("Unexpected error calling Gemini")
-            return jsonify({"error": "Something went wrong on our side. Please try again."}), 500
+        for attempt in range(2):
+            try:
+                response = get_client().models.generate_content(model=model, contents=contents, config=config)
+            except errors.APIError as e:
+                if e.code == 429:
+                    rate_limit_error = e
+                    break  # this model is out of quota, try the next one
+                if e.code in TRANSIENT_ERROR_CODES:
+                    overloaded = True
+                    if attempt == 0:
+                        time.sleep(1.5)
+                        continue  # retry the same model once
+                    break  # still overloaded, try the next one
+                log.exception("Gemini API error with model %s", model)
+                return jsonify({"error": "The AI service ran into a problem. Please try again."}), 502
+            except Exception:
+                log.exception("Unexpected error calling Gemini")
+                return jsonify({"error": "Something went wrong on our side. Please try again."}), 500
 
-        if not response.text:
-            return jsonify({"error": "No reply was generated for that message. Try rephrasing it."}), 502
-        return jsonify({"response": response.text})
+            if not response.text:
+                return jsonify({"error": "No reply was generated for that message. Try rephrasing it."}), 502
+            return jsonify({"response": response.text})
+
+    if not rate_limit_error:
+        return jsonify({"error": "Google's Gemini service is overloaded right now. Please try again in a moment."}), 503
 
     wait = retry_after_seconds(rate_limit_error)
     return (
