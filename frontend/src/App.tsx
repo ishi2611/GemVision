@@ -1,132 +1,102 @@
-import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { toast, Toaster } from 'react-hot-toast';
-import axios from 'axios';
-import ChatMessage from './components/ChatMessage';
+import { useEffect, useRef, useState } from 'react';
 import Header from './components/Header';
-import InputArea from './components/InputArea';
-import BackgroundAnimation from './components/BackgroundAnimation';
-import { Message } from './types';
+import EmptyState from './components/EmptyState';
+import ChatMessage, { TypingIndicator } from './components/ChatMessage';
+import ErrorNotice from './components/ErrorNotice';
+import Composer from './components/Composer';
+import { ChatError, sendChat } from './lib/api';
+import { ChatErrorState, Message } from './types';
+
+const newId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [sessionId, setSessionId] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<ChatErrorState | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  // Bumped on "New chat" so a reply to the old conversation is ignored.
+  const conversationRef = useRef(0);
 
   useEffect(() => {
-    // Generate a unique session ID when the app starts
-    setSessionId(Math.random().toString(36).substring(7));
-  }, []);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, loading, error]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const handleSendMessage = async (message: string, imageData: string | null) => {
-    if (!message.trim() && !imageData) return;
-
+  // Ask the model to reply to the last (user) message in `conversation`.
+  const requestReply = async (conversation: Message[]) => {
+    const conversationId = conversationRef.current;
+    const last = conversation[conversation.length - 1];
     setLoading(true);
-    const newMessage: Message = {
-      content: message,
-      role: 'user',
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, newMessage]);
+    setError(null);
 
     try {
-      const response = await axios.post('/api/chat', {
-        message,
-        session_id: sessionId,
-        image_data: imageData,
-        history: messages.map(({ role, content }) => ({ role, content })),
+      const reply = await sendChat({
+        message: last.content,
+        image: last.image,
+        history: conversation.slice(0, -1),
       });
-
-      const botResponse: Message = {
-        content: response.data.response,
-        role: 'assistant',
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, botResponse]);
-    } catch (error) {
-      toast.error('Failed to get response from the chatbot');
-      console.error('Error:', error);
+      if (conversationId !== conversationRef.current) return;
+      setMessages((prev) => [...prev, { id: newId(), role: 'assistant', content: reply }]);
+    } catch (e) {
+      if (conversationId !== conversationRef.current) return;
+      const err = e instanceof ChatError ? e : new ChatError('Something went wrong. Please try again.');
+      setError({
+        message: err.message,
+        retryAt: err.retryAfter ? Date.now() + err.retryAfter * 1000 : undefined,
+      });
     } finally {
-      setLoading(false);
+      if (conversationId === conversationRef.current) setLoading(false);
     }
   };
 
-  const handleFileUpload = async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await axios.post('/api/upload-document', formData);
-      toast.success('File uploaded successfully!');
-      return response.data.image_data;
-    } catch (error) {
-      toast.error('Failed to upload file');
-      console.error('Error:', error);
-      return null;
-    }
+  const send = (text: string, image?: string) => {
+    if (loading) return;
+    const next = [...messages, { id: newId(), role: 'user' as const, content: text, image }];
+    setMessages(next);
+    requestReply(next);
   };
 
-  const handleExportChat = () => {
-    if (messages.length === 0) {
-      toast.error('Nothing to export yet');
-      return;
-    }
-    const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const rows = messages.map((m) => [m.timestamp, m.role, m.content].map(escape).join(','));
-    const csv = ['timestamp,role,content', ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
+  const newChat = () => {
+    conversationRef.current += 1;
+    setMessages([]);
+    setError(null);
+    setLoading(false);
+  };
+
+  const exportChat = () => {
+    const transcript = messages
+      .map((m) => `**${m.role === 'user' ? 'You' : 'GemVision'}:**${m.image ? ' _(image attached)_' : ''}\n\n${m.content}`)
+      .join('\n\n---\n\n');
+    const blob = new Blob([`# GemVision conversation\n\n${transcript}\n`], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chat-export-${sessionId}-${new Date().toISOString()}.csv`;
-    document.body.appendChild(a);
+    a.download = `gemvision-chat-${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-    toast.success('Chat exported successfully!');
+    URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white relative overflow-hidden">
-      <BackgroundAnimation />
-      <div className="container mx-auto px-4 py-8 relative z-10">
-        <Header onExport={handleExportChat} />
+    <div className="flex h-dvh flex-col bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      <Header hasMessages={messages.length > 0} onNewChat={newChat} onExport={exportChat} />
 
-        <div className="max-w-4xl mx-auto bg-gray-800 rounded-lg shadow-xl overflow-hidden">
-          <div className="h-[600px] overflow-y-auto p-6">
-            <AnimatePresence>
-              {messages.map((message, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <ChatMessage message={message} />
-                </motion.div>
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4">
+          {messages.length === 0 ? (
+            <EmptyState onPick={(text) => send(text)} />
+          ) : (
+            <div className="flex flex-col gap-6 py-6">
+              {messages.map((m) => (
+                <ChatMessage key={m.id} message={m} />
               ))}
-            </AnimatePresence>
-            <div ref={messagesEndRef} />
-          </div>
-
-          <InputArea
-            onSendMessage={handleSendMessage}
-            onFileUpload={handleFileUpload}
-            loading={loading}
-          />
+              {loading && <TypingIndicator />}
+              {error && <ErrorNotice error={error} onRetry={() => requestReply(messages)} />}
+              <div ref={bottomRef} />
+            </div>
+          )}
         </div>
-      </div>
-      <Toaster position="top-right" />
+      </main>
+
+      <Composer disabled={loading} onSend={send} />
     </div>
   );
 }

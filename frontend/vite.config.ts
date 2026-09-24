@@ -5,12 +5,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Local dev: run `python api/index.py` (port 8000) alongside `npm run dev`.
     proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
-  }
+      '/api': 'http://localhost:8000',
+    },
+  },
 })

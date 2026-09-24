@@ -1,19 +1,13 @@
 export interface Message {
-  content: string;
+  id: string;
   role: 'user' | 'assistant';
-  timestamp: string;
+  content: string;
+  /** Data URL of an attached image (user messages only). */
+  image?: string;
 }
 
-export interface ChatMessageProps {
-  message: Message;
-}
-
-export interface InputAreaProps {
-  onSendMessage: (message: string, imageData: string | null) => void;
-  onFileUpload: (file: File) => Promise<string | null>;
-  loading: boolean;
-}
-
-export interface HeaderProps {
-  onExport: () => void;
+export interface ChatErrorState {
+  message: string;
+  /** Epoch ms after which retrying makes sense (set for rate-limit errors). */
+  retryAt?: number;
 }

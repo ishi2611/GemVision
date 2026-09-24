@@ -1,42 +1,43 @@
-import { motion } from 'framer-motion';
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
-import { HeaderProps } from '../types';
+import { ArrowDownTrayIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
+import Logo from './Logo';
 
-const Header = ({ onExport }: HeaderProps) => {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex justify-between items-center mb-8"
-    >
-      <div className="flex items-center">
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 260, damping: 20 }}
-          className="w-12 h-12 rounded-full bg-gradient-to-r from-purple-600 to-blue-500 flex items-center justify-center mr-4"
-        >
-          <span className="text-2xl font-bold">G</span>
-        </motion.div>
-        <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-blue-500 bg-clip-text text-transparent">
-            GemVision
-          </h1>
-          <p className="text-gray-400">Your AI Assistant</p>
-        </div>
+interface HeaderProps {
+  hasMessages: boolean;
+  onNewChat: () => void;
+  onExport: () => void;
+}
+
+const Header = ({ hasMessages, onNewChat, onExport }: HeaderProps) => (
+  <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
+    <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">
+      <div className="flex items-center gap-2.5">
+        <Logo />
+        <span className="text-base font-semibold tracking-tight">GemVision</span>
       </div>
-      
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={onExport}
-        className="flex items-center px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-500 rounded-lg text-white font-medium shadow-lg hover:shadow-xl transition-all duration-300"
-      >
-        <ArrowDownTrayIcon className="w-5 h-5 mr-2" />
-        Export Chat
-      </motion.button>
-    </motion.div>
-  );
-};
+
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={!hasMessages}
+          title="Download conversation"
+          aria-label="Download conversation"
+          className="rounded-lg p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        >
+          <ArrowDownTrayIcon className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={onNewChat}
+          disabled={!hasMessages}
+          className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          <PencilSquareIcon className="h-5 w-5" />
+          <span className="hidden sm:inline">New chat</span>
+        </button>
+      </div>
+    </div>
+  </header>
+);
 
 export default Header;
